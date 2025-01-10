@@ -17,14 +17,17 @@ package third
 import (
 	"context"
 	"fmt"
+	"github.com/openimsdk/open-im-server/v3/pkg/rpcli"
+	"time"
+
 	"github.com/openimsdk/open-im-server/v3/pkg/common/config"
 	"github.com/openimsdk/open-im-server/v3/pkg/common/storage/cache/redis"
 	"github.com/openimsdk/open-im-server/v3/pkg/common/storage/database/mgo"
 	"github.com/openimsdk/open-im-server/v3/pkg/localcache"
-	"time"
+	"github.com/openimsdk/tools/s3/aws"
+	"github.com/openimsdk/tools/s3/kodo"
 
 	"github.com/openimsdk/open-im-server/v3/pkg/common/storage/controller"
-	"github.com/openimsdk/open-im-server/v3/pkg/rpcclient"
 	"github.com/openimsdk/protocol/third"
 	"github.com/openimsdk/tools/db/mongoutil"
 	"github.com/openimsdk/tools/db/redisutil"
@@ -37,12 +40,15 @@ import (
 )
 
 type thirdServer struct {
+	third.UnimplementedThirdServer
 	thirdDatabase controller.ThirdDatabase
 	s3dataBase    controller.S3Database
-	userRpcClient rpcclient.UserRpcClient
 	defaultExpire time.Duration
 	config        *Config
+	s3            s3.Interface
+	userClient    *rpcli.UserClient
 }
+
 type Config struct {
 	RpcConfig          config.Third
 	RedisConfig        config.Redis
@@ -71,9 +77,12 @@ func Start(ctx context.Context, config *Config, client discovery.SvcDiscoveryReg
 	if err != nil {
 		return err
 	}
+
 	// Select the oss method according to the profile policy
 	enable := config.RpcConfig.Object.Enable
-	var o s3.Interface
+	var (
+		o s3.Interface
+	)
 	switch enable {
 	case "minio":
 		o, err = minio.NewMinio(ctx, redis.NewMinioCache(rdb), *config.MinioConfig.Build())
@@ -81,19 +90,28 @@ func Start(ctx context.Context, config *Config, client discovery.SvcDiscoveryReg
 		o, err = cos.NewCos(*config.RpcConfig.Object.Cos.Build())
 	case "oss":
 		o, err = oss.NewOSS(*config.RpcConfig.Object.Oss.Build())
+	case "kodo":
+		o, err = kodo.NewKodo(*config.RpcConfig.Object.Kodo.Build())
+	case "aws":
+		o, err = aws.NewAws(*config.RpcConfig.Object.Aws.Build())
 	default:
 		err = fmt.Errorf("invalid object enable: %s", enable)
 	}
 	if err != nil {
 		return err
 	}
+	userConn, err := client.GetConn(ctx, config.Discovery.RpcService.User)
+	if err != nil {
+		return err
+	}
 	localcache.InitLocalCache(&config.LocalCacheConfig)
 	third.RegisterThirdServer(server, &thirdServer{
 		thirdDatabase: controller.NewThirdDatabase(redis.NewThirdCache(rdb), logdb),
-		userRpcClient: rpcclient.NewUserRpcClient(client, config.Share.RpcRegisterName.User, config.Share.IMAdminUserID),
 		s3dataBase:    controller.NewS3Database(rdb, o, s3db),
 		defaultExpire: time.Hour * 24 * 7,
 		config:        config,
+		s3:            o,
+		userClient:    rpcli.NewUserClient(userConn),
 	})
 	return nil
 }

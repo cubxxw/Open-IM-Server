@@ -19,13 +19,14 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/openimsdk/open-im-server/v3/pkg/common/storage/model"
+	"github.com/openimsdk/open-im-server/v3/pkg/authverify"
 	"path"
 	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/openimsdk/open-im-server/v3/pkg/common/servererrs"
+	"github.com/openimsdk/open-im-server/v3/pkg/common/storage/model"
 	"github.com/openimsdk/protocol/third"
 	"github.com/openimsdk/tools/errs"
 	"github.com/openimsdk/tools/log"
@@ -281,6 +282,38 @@ func (t *thirdServer) CompleteFormData(ctx context.Context, req *third.CompleteF
 
 func (t *thirdServer) apiAddress(prefix, name string) string {
 	return prefix + name
+}
+
+func (t *thirdServer) DeleteOutdatedData(ctx context.Context, req *third.DeleteOutdatedDataReq) (*third.DeleteOutdatedDataResp, error) {
+	if err := authverify.CheckAdmin(ctx, t.config.Share.IMAdminUserID); err != nil {
+		return nil, err
+	}
+	engine := t.config.RpcConfig.Object.Enable
+	expireTime := time.UnixMilli(req.ExpireTime)
+	// Find all expired data in S3 database
+	models, err := t.s3dataBase.FindExpirationObject(ctx, engine, expireTime, req.ObjectGroup, int64(req.Limit))
+	if err != nil {
+		return nil, err
+	}
+	for i, obj := range models {
+		if err := t.s3dataBase.DeleteSpecifiedData(ctx, engine, []string{obj.Name}); err != nil {
+			return nil, errs.Wrap(err)
+		}
+		if err := t.s3dataBase.DelS3Key(ctx, engine, obj.Name); err != nil {
+			return nil, err
+		}
+		count, err := t.s3dataBase.GetKeyCount(ctx, engine, obj.Key)
+		if err != nil {
+			return nil, err
+		}
+		log.ZDebug(ctx, "delete s3 object record", "index", i, "s3", obj, "count", count)
+		if count == 0 {
+			if err := t.s3.DeleteObject(ctx, obj.Key); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return &third.DeleteOutdatedDataResp{Count: int32(len(models))}, nil
 }
 
 type FormDataMate struct {

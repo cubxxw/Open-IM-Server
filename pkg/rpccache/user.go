@@ -16,23 +16,24 @@ package rpccache
 
 import (
 	"context"
-	"github.com/openimsdk/open-im-server/v3/pkg/common/storage/cache/cachekey"
+	"github.com/openimsdk/open-im-server/v3/pkg/rpcli"
 
 	"github.com/openimsdk/open-im-server/v3/pkg/common/config"
+	"github.com/openimsdk/open-im-server/v3/pkg/common/storage/cache/cachekey"
 	"github.com/openimsdk/open-im-server/v3/pkg/localcache"
-	"github.com/openimsdk/open-im-server/v3/pkg/rpcclient"
 	"github.com/openimsdk/protocol/sdkws"
+	"github.com/openimsdk/protocol/user"
 	"github.com/openimsdk/tools/errs"
 	"github.com/openimsdk/tools/log"
 	"github.com/redis/go-redis/v9"
 )
 
-func NewUserLocalCache(client rpcclient.UserRpcClient, localCache *config.LocalCache, cli redis.UniversalClient) *UserLocalCache {
+func NewUserLocalCache(client *rpcli.UserClient, localCache *config.LocalCache, cli redis.UniversalClient) *UserLocalCache {
 	lc := localCache.User
 	log.ZDebug(context.Background(), "UserLocalCache", "topic", lc.Topic, "slotNum", lc.SlotNum, "slotSize", lc.SlotSize, "enable", lc.Enable())
 	x := &UserLocalCache{
 		client: client,
-		local: localcache.New[any](
+		local: localcache.New[[]byte](
 			localcache.WithLocalSlotNum(lc.SlotNum),
 			localcache.WithLocalSlotSize(lc.SlotSize),
 			localcache.WithLinkSlotNum(lc.SlotNum),
@@ -47,8 +48,8 @@ func NewUserLocalCache(client rpcclient.UserRpcClient, localCache *config.LocalC
 }
 
 type UserLocalCache struct {
-	client rpcclient.UserRpcClient
-	local  localcache.Cache[any]
+	client *rpcli.UserClient
+	local  localcache.Cache[[]byte]
 }
 
 func (u *UserLocalCache) GetUserInfo(ctx context.Context, userID string) (val *sdkws.UserInfo, err error) {
@@ -60,24 +61,34 @@ func (u *UserLocalCache) GetUserInfo(ctx context.Context, userID string) (val *s
 			log.ZError(ctx, "UserLocalCache GetUserInfo return", err)
 		}
 	}()
-	return localcache.AnyValue[*sdkws.UserInfo](u.local.Get(ctx, cachekey.GetUserInfoKey(userID), func(ctx context.Context) (any, error) {
+	var cache cacheProto[sdkws.UserInfo]
+	return cache.Unmarshal(u.local.Get(ctx, cachekey.GetUserInfoKey(userID), func(ctx context.Context) ([]byte, error) {
 		log.ZDebug(ctx, "UserLocalCache GetUserInfo rpc", "userID", userID)
-		return u.client.GetUserInfo(ctx, userID)
+		return cache.Marshal(u.client.GetUserInfo(ctx, userID))
 	}))
 }
 
 func (u *UserLocalCache) GetUserGlobalMsgRecvOpt(ctx context.Context, userID string) (val int32, err error) {
-	log.ZDebug(ctx, "UserLocalCache GetUserGlobalMsgRecvOpt req", "userID", userID)
+	resp, err := u.getUserGlobalMsgRecvOpt(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	return resp.GlobalRecvMsgOpt, nil
+}
+
+func (u *UserLocalCache) getUserGlobalMsgRecvOpt(ctx context.Context, userID string) (val *user.GetGlobalRecvMessageOptResp, err error) {
+	log.ZDebug(ctx, "UserLocalCache getUserGlobalMsgRecvOpt req", "userID", userID)
 	defer func() {
 		if err == nil {
-			log.ZDebug(ctx, "UserLocalCache GetUserGlobalMsgRecvOpt return", "value", val)
+			log.ZDebug(ctx, "UserLocalCache getUserGlobalMsgRecvOpt return", "value", val)
 		} else {
-			log.ZError(ctx, "UserLocalCache GetUserGlobalMsgRecvOpt return", err)
+			log.ZError(ctx, "UserLocalCache getUserGlobalMsgRecvOpt return", err)
 		}
 	}()
-	return localcache.AnyValue[int32](u.local.Get(ctx, cachekey.GetUserGlobalRecvMsgOptKey(userID), func(ctx context.Context) (any, error) {
+	var cache cacheProto[user.GetGlobalRecvMessageOptResp]
+	return cache.Unmarshal(u.local.Get(ctx, cachekey.GetUserGlobalRecvMsgOptKey(userID), func(ctx context.Context) ([]byte, error) {
 		log.ZDebug(ctx, "UserLocalCache GetUserGlobalMsgRecvOpt rpc", "userID", userID)
-		return u.client.GetUserGlobalMsgRecvOpt(ctx, userID)
+		return cache.Marshal(u.client.UserClient.GetGlobalRecvMessageOpt(ctx, &user.GetGlobalRecvMessageOptReq{UserID: userID}))
 	}))
 }
 
@@ -87,6 +98,7 @@ func (u *UserLocalCache) GetUsersInfo(ctx context.Context, userIDs []string) ([]
 		user, err := u.GetUserInfo(ctx, userID)
 		if err != nil {
 			if errs.ErrRecordNotFound.Is(err) {
+				log.ZWarn(ctx, "User info notFound", err, "userID", userID)
 				continue
 			}
 			return nil, err

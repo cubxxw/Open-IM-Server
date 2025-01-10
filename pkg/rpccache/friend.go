@@ -16,21 +16,22 @@ package rpccache
 
 import (
 	"context"
-	cachekey2 "github.com/openimsdk/open-im-server/v3/pkg/common/storage/cache/cachekey"
+	"github.com/openimsdk/open-im-server/v3/pkg/common/storage/cache/cachekey"
+	"github.com/openimsdk/open-im-server/v3/pkg/rpcli"
+	"github.com/openimsdk/protocol/relation"
 
 	"github.com/openimsdk/open-im-server/v3/pkg/common/config"
 	"github.com/openimsdk/open-im-server/v3/pkg/localcache"
-	"github.com/openimsdk/open-im-server/v3/pkg/rpcclient"
 	"github.com/openimsdk/tools/log"
 	"github.com/redis/go-redis/v9"
 )
 
-func NewFriendLocalCache(client rpcclient.FriendRpcClient, localCache *config.LocalCache, cli redis.UniversalClient) *FriendLocalCache {
+func NewFriendLocalCache(client *rpcli.RelationClient, localCache *config.LocalCache, cli redis.UniversalClient) *FriendLocalCache {
 	lc := localCache.Friend
 	log.ZDebug(context.Background(), "FriendLocalCache", "topic", lc.Topic, "slotNum", lc.SlotNum, "slotSize", lc.SlotSize, "enable", lc.Enable())
 	x := &FriendLocalCache{
 		client: client,
-		local: localcache.New[any](
+		local: localcache.New[[]byte](
 			localcache.WithLocalSlotNum(lc.SlotNum),
 			localcache.WithLocalSlotSize(lc.SlotSize),
 			localcache.WithLinkSlotNum(lc.SlotNum),
@@ -45,37 +46,56 @@ func NewFriendLocalCache(client rpcclient.FriendRpcClient, localCache *config.Lo
 }
 
 type FriendLocalCache struct {
-	client rpcclient.FriendRpcClient
-	local  localcache.Cache[any]
+	client *rpcli.RelationClient
+	local  localcache.Cache[[]byte]
 }
 
 func (f *FriendLocalCache) IsFriend(ctx context.Context, possibleFriendUserID, userID string) (val bool, err error) {
-	log.ZDebug(ctx, "FriendLocalCache IsFriend req", "possibleFriendUserID", possibleFriendUserID, "userID", userID)
+	res, err := f.isFriend(ctx, possibleFriendUserID, userID)
+	if err != nil {
+		return false, err
+	}
+	return res.InUser1Friends, nil
+}
+
+func (f *FriendLocalCache) isFriend(ctx context.Context, possibleFriendUserID, userID string) (val *relation.IsFriendResp, err error) {
+	log.ZDebug(ctx, "FriendLocalCache isFriend req", "possibleFriendUserID", possibleFriendUserID, "userID", userID)
 	defer func() {
 		if err == nil {
-			log.ZDebug(ctx, "FriendLocalCache IsFriend return", "value", val)
+			log.ZDebug(ctx, "FriendLocalCache isFriend return", "possibleFriendUserID", possibleFriendUserID, "userID", userID, "value", val)
 		} else {
-			log.ZError(ctx, "FriendLocalCache IsFriend return", err)
+			log.ZError(ctx, "FriendLocalCache isFriend return", err, "possibleFriendUserID", possibleFriendUserID, "userID", userID)
 		}
 	}()
-	return localcache.AnyValue[bool](f.local.GetLink(ctx, cachekey2.GetIsFriendKey(possibleFriendUserID, userID), func(ctx context.Context) (any, error) {
-		log.ZDebug(ctx, "FriendLocalCache IsFriend rpc", "possibleFriendUserID", possibleFriendUserID, "userID", userID)
-		return f.client.IsFriend(ctx, possibleFriendUserID, userID)
-	}, cachekey2.GetFriendIDsKey(possibleFriendUserID)))
+	var cache cacheProto[relation.IsFriendResp]
+	return cache.Unmarshal(f.local.GetLink(ctx, cachekey.GetIsFriendKey(possibleFriendUserID, userID), func(ctx context.Context) ([]byte, error) {
+		log.ZDebug(ctx, "FriendLocalCache isFriend rpc", "possibleFriendUserID", possibleFriendUserID, "userID", userID)
+		return cache.Marshal(f.client.FriendClient.IsFriend(ctx, &relation.IsFriendReq{UserID1: userID, UserID2: possibleFriendUserID}))
+	}, cachekey.GetFriendIDsKey(possibleFriendUserID)))
 }
 
 // IsBlack possibleBlackUserID selfUserID.
 func (f *FriendLocalCache) IsBlack(ctx context.Context, possibleBlackUserID, userID string) (val bool, err error) {
-	log.ZDebug(ctx, "FriendLocalCache IsBlack req", "possibleBlackUserID", possibleBlackUserID, "userID", userID)
+	res, err := f.isBlack(ctx, possibleBlackUserID, userID)
+	if err != nil {
+		return false, err
+	}
+	return res.InUser2Blacks, nil
+}
+
+// IsBlack possibleBlackUserID selfUserID.
+func (f *FriendLocalCache) isBlack(ctx context.Context, possibleBlackUserID, userID string) (val *relation.IsBlackResp, err error) {
+	log.ZDebug(ctx, "FriendLocalCache isBlack req", "possibleBlackUserID", possibleBlackUserID, "userID", userID)
 	defer func() {
 		if err == nil {
-			log.ZDebug(ctx, "FriendLocalCache IsBlack return", "value", val)
+			log.ZDebug(ctx, "FriendLocalCache isBlack return", "possibleBlackUserID", possibleBlackUserID, "userID", userID, "value", val)
 		} else {
-			log.ZError(ctx, "FriendLocalCache IsBlack return", err)
+			log.ZError(ctx, "FriendLocalCache isBlack return", err, "possibleBlackUserID", possibleBlackUserID, "userID", userID)
 		}
 	}()
-	return localcache.AnyValue[bool](f.local.GetLink(ctx, cachekey2.GetIsBlackIDsKey(possibleBlackUserID, userID), func(ctx context.Context) (any, error) {
+	var cache cacheProto[relation.IsBlackResp]
+	return cache.Unmarshal(f.local.GetLink(ctx, cachekey.GetIsBlackIDsKey(possibleBlackUserID, userID), func(ctx context.Context) ([]byte, error) {
 		log.ZDebug(ctx, "FriendLocalCache IsBlack rpc", "possibleBlackUserID", possibleBlackUserID, "userID", userID)
-		return f.client.IsBlack(ctx, possibleBlackUserID, userID)
-	}, cachekey2.GetBlackIDsKey(userID)))
+		return cache.Marshal(f.client.FriendClient.IsBlack(ctx, &relation.IsBlackReq{UserID1: possibleBlackUserID, UserID2: userID}))
+	}, cachekey.GetBlackIDsKey(userID)))
 }

@@ -16,6 +16,7 @@ package cache
 
 import (
 	"context"
+
 	"github.com/openimsdk/open-im-server/v3/pkg/common/storage/common"
 	"github.com/openimsdk/open-im-server/v3/pkg/common/storage/model"
 )
@@ -36,7 +37,6 @@ type GroupCache interface {
 	DelGroupMembersHash(groupID string) GroupCache
 
 	GetGroupMemberIDs(ctx context.Context, groupID string) (groupMemberIDs []string, err error)
-	GetGroupsMemberIDs(ctx context.Context, groupIDs []string) (groupMemberIDs map[string][]string, err error)
 
 	DelGroupMemberIDs(groupID string) GroupCache
 
@@ -65,5 +65,6 @@ type GroupCache interface {
 	DelMaxGroupMemberVersion(groupIDs ...string) GroupCache
 	DelMaxJoinGroupVersion(userIDs ...string) GroupCache
 	FindMaxGroupMemberVersion(ctx context.Context, groupID string) (*model.VersionLog, error)
+	BatchFindMaxGroupMemberVersion(ctx context.Context, groupIDs []string) ([]*model.VersionLog, error)
 	FindMaxJoinGroupVersion(ctx context.Context, userID string) (*model.VersionLog, error)
 }

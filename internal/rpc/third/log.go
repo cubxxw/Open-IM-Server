@@ -17,16 +17,15 @@ package third
 import (
 	"context"
 	"crypto/rand"
-	relationtb "github.com/openimsdk/open-im-server/v3/pkg/common/storage/model"
 	"time"
 
 	"github.com/openimsdk/open-im-server/v3/pkg/authverify"
 	"github.com/openimsdk/open-im-server/v3/pkg/common/servererrs"
+	relationtb "github.com/openimsdk/open-im-server/v3/pkg/common/storage/model"
 	"github.com/openimsdk/protocol/constant"
 	"github.com/openimsdk/protocol/third"
 	"github.com/openimsdk/tools/errs"
 	"github.com/openimsdk/tools/utils/datautil"
-	"github.com/openimsdk/tools/utils/stringutil"
 )
 
 func genLogID() string {
@@ -50,13 +49,14 @@ func (t *thirdServer) UploadLogs(ctx context.Context, req *third.UploadLogsReq) 
 	platform := constant.PlatformID2Name[int(req.Platform)]
 	for _, fileURL := range req.FileURLs {
 		log := relationtb.Log{
-			Version:    req.Version,
-			SystemType: req.SystemType,
-			Platform:   platform,
-			UserID:     userID,
-			CreateTime: time.Now(),
-			Url:        fileURL.URL,
-			FileName:   fileURL.Filename,
+			Platform:     platform,
+			UserID:       userID,
+			CreateTime:   time.Now(),
+			Url:          fileURL.URL,
+			FileName:     fileURL.Filename,
+			AppFramework: req.AppFramework,
+			Version:      req.Version,
+			Ex:           req.Ex,
 		}
 		for i := 0; i < 20; i++ {
 			id := genLogID()
@@ -110,7 +110,7 @@ func dbToPbLogInfos(logs []*relationtb.Log) []*third.LogInfo {
 		return &third.LogInfo{
 			Filename:   log.FileName,
 			UserID:     log.UserID,
-			Platform:   stringutil.StringToInt32(log.Platform),
+			Platform:   log.Platform,
 			Url:        log.Url,
 			CreateTime: log.CreateTime.UnixMilli(),
 			LogID:      log.LogID,
@@ -148,7 +148,7 @@ func (t *thirdServer) SearchLogs(ctx context.Context, req *third.SearchLogsReq) 
 	for _, log := range logs {
 		userIDs = append(userIDs, log.UserID)
 	}
-	userMap, err := t.userRpcClient.GetUsersInfoMap(ctx, userIDs)
+	userMap, err := t.userClient.GetUsersInfoMap(ctx, userIDs)
 	if err != nil {
 		return nil, err
 	}

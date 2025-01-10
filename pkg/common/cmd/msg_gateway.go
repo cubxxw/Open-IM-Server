@@ -16,9 +16,10 @@ package cmd
 
 import (
 	"context"
-	"github.com/openimsdk/open-im-server/v3/pkg/common/config"
 
 	"github.com/openimsdk/open-im-server/v3/internal/msggateway"
+	"github.com/openimsdk/open-im-server/v3/pkg/common/config"
+	"github.com/openimsdk/open-im-server/v3/version"
 
 	"github.com/openimsdk/tools/system/program"
 	"github.com/spf13/cobra"
@@ -35,13 +36,14 @@ func NewMsgGatewayCmd() *MsgGatewayCmd {
 	var msgGatewayConfig msggateway.Config
 	ret := &MsgGatewayCmd{msgGatewayConfig: &msgGatewayConfig}
 	ret.configMap = map[string]any{
-		OpenIMMsgGatewayCfgFileName: &msgGatewayConfig.MsgGateway,
-		ShareFileName:               &msgGatewayConfig.Share,
-		WebhooksConfigFileName:      &msgGatewayConfig.WebhooksConfig,
-		DiscoveryConfigFilename:     &msgGatewayConfig.Discovery,
+		config.OpenIMMsgGatewayCfgFileName: &msgGatewayConfig.MsgGateway,
+		config.ShareFileName:               &msgGatewayConfig.Share,
+		config.RedisConfigFileName:         &msgGatewayConfig.RedisConfig,
+		config.WebhooksConfigFileName:      &msgGatewayConfig.WebhooksConfig,
+		config.DiscoveryConfigFilename:     &msgGatewayConfig.Discovery,
 	}
 	ret.RootCmd = NewRootCmd(program.GetProcessName(), WithConfigMap(ret.configMap))
-	ret.ctx = context.WithValue(context.Background(), "version", config.Version)
+	ret.ctx = context.WithValue(context.Background(), "version", version.Version)
 	ret.Command.RunE = func(cmd *cobra.Command, args []string) error {
 		return ret.runE()
 	}

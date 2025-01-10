@@ -16,9 +16,11 @@ package cmd
 
 import (
 	"context"
+
 	"github.com/openimsdk/open-im-server/v3/internal/rpc/conversation"
 	"github.com/openimsdk/open-im-server/v3/pkg/common/config"
 	"github.com/openimsdk/open-im-server/v3/pkg/common/startrpc"
+	"github.com/openimsdk/open-im-server/v3/version"
 	"github.com/openimsdk/tools/system/program"
 	"github.com/spf13/cobra"
 )
@@ -34,16 +36,16 @@ func NewConversationRpcCmd() *ConversationRpcCmd {
 	var conversationConfig conversation.Config
 	ret := &ConversationRpcCmd{conversationConfig: &conversationConfig}
 	ret.configMap = map[string]any{
-		OpenIMRPCConversationCfgFileName: &conversationConfig.RpcConfig,
-		RedisConfigFileName:              &conversationConfig.RedisConfig,
-		MongodbConfigFileName:            &conversationConfig.MongodbConfig,
-		ShareFileName:                    &conversationConfig.Share,
-		NotificationFileName:             &conversationConfig.NotificationConfig,
-		LocalCacheConfigFileName:         &conversationConfig.LocalCacheConfig,
-		DiscoveryConfigFilename:          &conversationConfig.Discovery,
+		config.OpenIMRPCConversationCfgFileName: &conversationConfig.RpcConfig,
+		config.RedisConfigFileName:              &conversationConfig.RedisConfig,
+		config.MongodbConfigFileName:            &conversationConfig.MongodbConfig,
+		config.ShareFileName:                    &conversationConfig.Share,
+		config.NotificationFileName:             &conversationConfig.NotificationConfig,
+		config.LocalCacheConfigFileName:         &conversationConfig.LocalCacheConfig,
+		config.DiscoveryConfigFilename:          &conversationConfig.Discovery,
 	}
 	ret.RootCmd = NewRootCmd(program.GetProcessName(), WithConfigMap(ret.configMap))
-	ret.ctx = context.WithValue(context.Background(), "version", config.Version)
+	ret.ctx = context.WithValue(context.Background(), "version", version.Version)
 	ret.Command.RunE = func(cmd *cobra.Command, args []string) error {
 		return ret.runE()
 	}
@@ -56,6 +58,16 @@ func (a *ConversationRpcCmd) Exec() error {
 
 func (a *ConversationRpcCmd) runE() error {
 	return startrpc.Start(a.ctx, &a.conversationConfig.Discovery, &a.conversationConfig.RpcConfig.Prometheus, a.conversationConfig.RpcConfig.RPC.ListenIP,
-		a.conversationConfig.RpcConfig.RPC.RegisterIP, a.conversationConfig.RpcConfig.RPC.Ports,
-		a.Index(), a.conversationConfig.Share.RpcRegisterName.Conversation, &a.conversationConfig.Share, a.conversationConfig, conversation.Start)
+		a.conversationConfig.RpcConfig.RPC.RegisterIP, a.conversationConfig.RpcConfig.RPC.AutoSetPorts, a.conversationConfig.RpcConfig.RPC.Ports,
+		a.Index(), a.conversationConfig.Discovery.RpcService.Conversation, &a.conversationConfig.NotificationConfig, a.conversationConfig,
+		[]string{
+			a.conversationConfig.RpcConfig.GetConfigFileName(),
+			a.conversationConfig.RedisConfig.GetConfigFileName(),
+			a.conversationConfig.MongodbConfig.GetConfigFileName(),
+			a.conversationConfig.NotificationConfig.GetConfigFileName(),
+			a.conversationConfig.Share.GetConfigFileName(),
+			a.conversationConfig.LocalCacheConfig.GetConfigFileName(),
+			a.conversationConfig.Discovery.GetConfigFileName(),
+		}, nil,
+		conversation.Start)
 }

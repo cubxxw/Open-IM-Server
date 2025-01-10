@@ -16,11 +16,12 @@ package controller
 
 import (
 	"context"
-	redis2 "github.com/openimsdk/open-im-server/v3/pkg/common/storage/cache/redis"
-	"github.com/openimsdk/open-im-server/v3/pkg/common/storage/database"
-	"github.com/openimsdk/open-im-server/v3/pkg/common/storage/model"
 	"path/filepath"
 	"time"
+
+	redisCache "github.com/openimsdk/open-im-server/v3/pkg/common/storage/cache/redis"
+	"github.com/openimsdk/open-im-server/v3/pkg/common/storage/database"
+	"github.com/openimsdk/open-im-server/v3/pkg/common/storage/model"
 
 	"github.com/openimsdk/open-im-server/v3/pkg/common/storage/cache"
 	"github.com/openimsdk/tools/s3"
@@ -38,20 +39,26 @@ type S3Database interface {
 	SetObject(ctx context.Context, info *model.Object) error
 	StatObject(ctx context.Context, name string) (*s3.ObjectInfo, error)
 	FormData(ctx context.Context, name string, size int64, contentType string, duration time.Duration) (*s3.FormData, error)
+	FindExpirationObject(ctx context.Context, engine string, expiration time.Time, needDelType []string, count int64) ([]*model.Object, error)
+	DeleteSpecifiedData(ctx context.Context, engine string, name []string) error
+	DelS3Key(ctx context.Context, engine string, keys ...string) error
+	GetKeyCount(ctx context.Context, engine string, key string) (int64, error)
 }
 
 func NewS3Database(rdb redis.UniversalClient, s3 s3.Interface, obj database.ObjectInfo) S3Database {
 	return &s3Database{
-		s3:    cont.New(redis2.NewS3Cache(rdb, s3), s3),
-		cache: redis2.NewObjectCacheRedis(rdb, obj),
-		db:    obj,
+		s3:      cont.New(redisCache.NewS3Cache(rdb, s3), s3),
+		cache:   redisCache.NewObjectCacheRedis(rdb, obj),
+		s3cache: redisCache.NewS3Cache(rdb, s3),
+		db:      obj,
 	}
 }
 
 type s3Database struct {
-	s3    *cont.Controller
-	cache cache.ObjectCache
-	db    database.ObjectInfo
+	s3      *cont.Controller
+	cache   cache.ObjectCache
+	s3cache cont.S3Cache
+	db      database.ObjectInfo
 }
 
 func (s *s3Database) PartSize(ctx context.Context, size int64) (int64, error) {
@@ -110,4 +117,20 @@ func (s *s3Database) StatObject(ctx context.Context, name string) (*s3.ObjectInf
 
 func (s *s3Database) FormData(ctx context.Context, name string, size int64, contentType string, duration time.Duration) (*s3.FormData, error) {
 	return s.s3.FormData(ctx, name, size, contentType, duration)
+}
+
+func (s *s3Database) FindExpirationObject(ctx context.Context, engine string, expiration time.Time, needDelType []string, count int64) ([]*model.Object, error) {
+	return s.db.FindExpirationObject(ctx, engine, expiration, needDelType, count)
+}
+
+func (s *s3Database) GetKeyCount(ctx context.Context, engine string, key string) (int64, error) {
+	return s.db.GetKeyCount(ctx, engine, key)
+}
+
+func (s *s3Database) DeleteSpecifiedData(ctx context.Context, engine string, name []string) error {
+	return s.db.Delete(ctx, engine, name)
+}
+
+func (s *s3Database) DelS3Key(ctx context.Context, engine string, keys ...string) error {
+	return s.s3cache.DelS3Key(ctx, engine, keys...)
 }

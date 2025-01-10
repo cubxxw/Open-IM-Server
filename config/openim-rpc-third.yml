@@ -1,32 +1,52 @@
 rpc:
   # The IP address where this RPC service registers itself; if left blank, it defaults to the internal network IP
-  registerIP: ''
+  registerIP: 
   # IP address that the RPC service listens on; setting to 0.0.0.0 listens on both internal and external IPs. If left blank, it automatically uses the internal network IP
   listenIP: 0.0.0.0
+  # autoSetPorts indicates whether to automatically set the ports
+  # if you use in kubernetes, set it to false
+  autoSetPorts: true
   # List of ports that the RPC service listens on; configuring multiple ports will launch multiple instances. These must match the number of configured prometheus ports
-  ports: [ 10190 ]
+  # It will only take effect when autoSetPorts is set to false.
+  ports:
 
 prometheus:
   # Enable or disable Prometheus monitoring
   enable: true
   # List of ports that Prometheus listens on; these must match the number of rpc.ports to ensure correct monitoring setup
-  ports: [ 20101 ]
+  # It will only take effect when autoSetPorts is set to false.
+  ports:
 
 
 object:
   # Use MinIO as object storage, or set to "cos", "oss", "kodo", "aws", while also configuring the corresponding settings
-  enable: "minio"
+  enable: minio
   cos:
     bucketURL: https://temp-1252357374.cos.ap-chengdu.myqcloud.com
-    secretID: ''
-    secretKey: ''
-    sessionToken: ''
+    secretID: 
+    secretKey: 
+    sessionToken: 
     publicRead: false
   oss:
-    endpoint: "https://oss-cn-chengdu.aliyuncs.com"
-    bucket: "demo-9999999"
-    bucketURL: "https://demo-9999999.oss-cn-chengdu.aliyuncs.com"
-    accessKeyID: ''
-    accessKeySecret: ''
-    sessionToken: ''
+    endpoint: https://oss-cn-chengdu.aliyuncs.com
+    bucket: demo-9999999
+    bucketURL: https://demo-9999999.oss-cn-chengdu.aliyuncs.com
+    accessKeyID: 
+    accessKeySecret: 
+    sessionToken: 
+    publicRead: false
+  kodo:
+    endpoint: https://s3.cn-south-1.qiniucs.com
+    bucket: testdemo12313
+    bucketURL: http://so2at6d05.hn-bkt.clouddn.com
+    accessKeyID:
+    accessKeySecret:
+    sessionToken: 
+    publicRead: false
+  aws:
+    region: ap-southeast-2
+    bucket: testdemo832234
+    accessKeyID:
+    secretAccessKey:
+    sessionToken:
     publicRead: false

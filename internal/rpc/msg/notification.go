@@ -17,7 +17,7 @@ package msg
 import (
 	"context"
 
-	"github.com/openimsdk/open-im-server/v3/pkg/rpcclient"
+	"github.com/openimsdk/open-im-server/v3/pkg/notification"
 	"github.com/openimsdk/protocol/constant"
 	"github.com/openimsdk/protocol/sdkws"
 )
@@ -47,4 +47,8 @@ func (m *MsgNotificationSender) MarkAsReadNotification(ctx context.Context, conv
 		HasReadSeq:       hasReadSeq,
 	}
 	m.NotificationWithSessionType(ctx, sendID, recvID, constant.HasReadReceipt, sessionType, tips)
+}
+
+func (m *MsgNotificationSender) StreamMsgNotification(ctx context.Context, sendID string, recvID string, sessionType int32, tips *sdkws.StreamMsgTips) {
+	m.NotificationWithSessionType(ctx, sendID, recvID, constant.StreamMsgNotification, sessionType, tips)
 }

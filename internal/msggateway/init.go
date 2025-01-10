@@ -16,9 +16,13 @@ package msggateway
 
 import (
 	"context"
-	"github.com/openimsdk/open-im-server/v3/pkg/common/config"
-	"github.com/openimsdk/tools/utils/datautil"
 	"time"
+
+	"github.com/openimsdk/open-im-server/v3/pkg/common/config"
+	"github.com/openimsdk/open-im-server/v3/pkg/rpccache"
+	"github.com/openimsdk/tools/db/redisutil"
+	"github.com/openimsdk/tools/utils/datautil"
+	"github.com/openimsdk/tools/utils/runtimeenv"
 
 	"github.com/openimsdk/tools/log"
 )
@@ -26,34 +30,45 @@ import (
 type Config struct {
 	MsgGateway     config.MsgGateway
 	Share          config.Share
+	RedisConfig    config.Redis
 	WebhooksConfig config.Webhooks
 	Discovery      config.Discovery
+
+	RuntimeEnv string
 }
 
 // Start run ws server.
 func Start(ctx context.Context, index int, conf *Config) error {
-	log.CInfo(ctx, "MSG-GATEWAY server is initializing", "rpcPorts", conf.MsgGateway.RPC.Ports,
+	conf.RuntimeEnv = runtimeenv.PrintRuntimeEnvironment()
+
+	log.CInfo(ctx, "MSG-GATEWAY server is initializing", "runtimeEnv", conf.RuntimeEnv,
+		"rpcPorts", conf.MsgGateway.RPC.Ports,
 		"wsPort", conf.MsgGateway.LongConnSvr.Ports, "prometheusPorts", conf.MsgGateway.Prometheus.Ports)
 	wsPort, err := datautil.GetElemByIndex(conf.MsgGateway.LongConnSvr.Ports, index)
 	if err != nil {
 		return err
 	}
-	rpcPort, err := datautil.GetElemByIndex(conf.MsgGateway.RPC.Ports, index)
+
+	rdb, err := redisutil.NewRedisClient(ctx, conf.RedisConfig.Build())
 	if err != nil {
 		return err
 	}
-	longServer, err := NewWsServer(
+	longServer := NewWsServer(
 		conf,
 		WithPort(wsPort),
 		WithMaxConnNum(int64(conf.MsgGateway.LongConnSvr.WebsocketMaxConnNum)),
 		WithHandshakeTimeout(time.Duration(conf.MsgGateway.LongConnSvr.WebsocketTimeout)*time.Second),
 		WithMessageMaxMsgLength(conf.MsgGateway.LongConnSvr.WebsocketMaxMsgLen),
 	)
-	if err != nil {
-		return err
-	}
 
-	hubServer := NewServer(rpcPort, longServer, conf)
+	hubServer := NewServer(longServer, conf, func(srv *Server) error {
+		var err error
+		longServer.online, err = rpccache.NewOnlineCache(srv.userClient, nil, rdb, false, longServer.subscriberUserOnlineStatusChanges)
+		return err
+	})
+
+	go longServer.ChangeOnlineStatus(4)
+
 	netDone := make(chan error)
 	go func() {
 		err = hubServer.Start(ctx, index, conf)

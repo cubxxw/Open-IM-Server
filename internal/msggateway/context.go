@@ -66,12 +66,16 @@ func (c *UserConnContext) Value(key any) any {
 }
 
 func newContext(respWriter http.ResponseWriter, req *http.Request) *UserConnContext {
+	remoteAddr := req.RemoteAddr
+	if forwarded := req.Header.Get("X-Forwarded-For"); forwarded != "" {
+		remoteAddr += "_" + forwarded
+	}
 	return &UserConnContext{
 		RespWriter: respWriter,
 		Req:        req,
 		Path:       req.URL.Path,
 		Method:     req.Method,
-		RemoteAddr: req.RemoteAddr,
+		RemoteAddr: remoteAddr,
 		ConnID:     encrypt.Md5(req.RemoteAddr + "_" + strconv.Itoa(int(timeutil.GetCurrentTimestampByMill()))),
 	}
 }
@@ -149,6 +153,14 @@ func (c *UserConnContext) GetCompression() bool {
 	return false
 }
 
+func (c *UserConnContext) GetSDKType() string {
+	sdkType := c.Req.URL.Query().Get(SDKType)
+	if sdkType == "" {
+		sdkType = GoSDK
+	}
+	return sdkType
+}
+
 func (c *UserConnContext) ShouldSendResp() bool {
 	errResp, exists := c.Query(SendResponse)
 	if exists {
@@ -189,7 +201,11 @@ func (c *UserConnContext) ParseEssentialArgs() error {
 	_, err := strconv.Atoi(platformIDStr)
 	if err != nil {
 		return servererrs.ErrConnArgsErr.WrapMsg("platformID is not int")
-
+	}
+	switch sdkType, _ := c.Query(SDKType); sdkType {
+	case "", GoSDK, JsSDK:
+	default:
+		return servererrs.ErrConnArgsErr.WrapMsg("sdkType is not go or js")
 	}
 	return nil
 }

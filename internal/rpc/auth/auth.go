@@ -16,17 +16,20 @@ package auth
 
 import (
 	"context"
+	"errors"
+
+	"github.com/openimsdk/open-im-server/v3/pkg/rpcli"
 
 	"github.com/openimsdk/open-im-server/v3/pkg/common/config"
 	redis2 "github.com/openimsdk/open-im-server/v3/pkg/common/storage/cache/redis"
 	"github.com/openimsdk/tools/db/redisutil"
+	"github.com/openimsdk/tools/utils/datautil"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/openimsdk/open-im-server/v3/pkg/authverify"
 	"github.com/openimsdk/open-im-server/v3/pkg/common/prommetrics"
 	"github.com/openimsdk/open-im-server/v3/pkg/common/servererrs"
 	"github.com/openimsdk/open-im-server/v3/pkg/common/storage/controller"
-	"github.com/openimsdk/open-im-server/v3/pkg/rpcclient"
 	pbauth "github.com/openimsdk/protocol/auth"
 	"github.com/openimsdk/protocol/constant"
 	"github.com/openimsdk/protocol/msggateway"
@@ -38,10 +41,11 @@ import (
 )
 
 type authServer struct {
+	pbauth.UnimplementedAuthServer
 	authDatabase   controller.AuthDatabase
-	userRpcClient  *rpcclient.UserRpcClient
 	RegisterCenter discovery.SvcDiscoveryRegistry
 	config         *Config
+	userClient     *rpcli.UserClient
 }
 
 type Config struct {
@@ -56,32 +60,45 @@ func Start(ctx context.Context, config *Config, client discovery.SvcDiscoveryReg
 	if err != nil {
 		return err
 	}
-	userRpcClient := rpcclient.NewUserRpcClient(client, config.Share.RpcRegisterName.User, config.Share.IMAdminUserID)
+	userConn, err := client.GetConn(ctx, config.Discovery.RpcService.User)
+	if err != nil {
+		return err
+	}
 	pbauth.RegisterAuthServer(server, &authServer{
-		userRpcClient:  &userRpcClient,
 		RegisterCenter: client,
 		authDatabase: controller.NewAuthDatabase(
 			redis2.NewTokenCacheModel(rdb, config.RpcConfig.TokenPolicy.Expire),
 			config.Share.Secret,
 			config.RpcConfig.TokenPolicy.Expire,
+			config.Share.MultiLogin,
+			config.Share.IMAdminUserID,
 		),
-		config: config,
+		config:     config,
+		userClient: rpcli.NewUserClient(userConn),
 	})
 	return nil
 }
 
-func (s *authServer) UserToken(ctx context.Context, req *pbauth.UserTokenReq) (*pbauth.UserTokenResp, error) {
-	resp := pbauth.UserTokenResp{}
+func (s *authServer) GetAdminToken(ctx context.Context, req *pbauth.GetAdminTokenReq) (*pbauth.GetAdminTokenResp, error) {
+	resp := pbauth.GetAdminTokenResp{}
 	if req.Secret != s.config.Share.Secret {
 		return nil, errs.ErrNoPermission.WrapMsg("secret invalid")
 	}
-	if _, err := s.userRpcClient.GetUserInfo(ctx, req.UserID); err != nil {
+
+	if !datautil.Contain(req.UserID, s.config.Share.IMAdminUserID...) {
+		return nil, errs.ErrArgs.WrapMsg("userID is error.", "userID", req.UserID, "adminUserID", s.config.Share.IMAdminUserID)
+
+	}
+
+	if err := s.userClient.CheckUser(ctx, []string{req.UserID}); err != nil {
 		return nil, err
 	}
-	token, err := s.authDatabase.CreateToken(ctx, req.UserID, int(req.PlatformID))
+
+	token, err := s.authDatabase.CreateToken(ctx, req.UserID, int(constant.AdminPlatformID))
 	if err != nil {
 		return nil, err
 	}
+
 	prommetrics.UserLoginCounter.Inc()
 	resp.Token = token
 	resp.ExpireTimeSeconds = s.config.RpcConfig.TokenPolicy.Expire * 24 * 60 * 60
@@ -92,13 +109,22 @@ func (s *authServer) GetUserToken(ctx context.Context, req *pbauth.GetUserTokenR
 	if err := authverify.CheckAdmin(ctx, s.config.Share.IMAdminUserID); err != nil {
 		return nil, err
 	}
+
+	if req.PlatformID == constant.AdminPlatformID {
+		return nil, errs.ErrNoPermission.WrapMsg("platformID invalid. platformID must not be adminPlatformID")
+	}
+
 	resp := pbauth.GetUserTokenResp{}
 
 	if authverify.IsManagerUserID(req.UserID, s.config.Share.IMAdminUserID) {
 		return nil, errs.ErrNoPermission.WrapMsg("don't get Admin token")
 	}
-	if _, err := s.userRpcClient.GetUserInfo(ctx, req.UserID); err != nil {
+	user, err := s.userClient.GetUserInfo(ctx, req.UserID)
+	if err != nil {
 		return nil, err
+	}
+	if user.AppMangerLevel >= constant.AppNotificationAdmin {
+		return nil, errs.ErrArgs.WrapMsg("app account can`t get token")
 	}
 	token, err := s.authDatabase.CreateToken(ctx, req.UserID, int(req.PlatformID))
 	if err != nil {
@@ -112,7 +138,11 @@ func (s *authServer) GetUserToken(ctx context.Context, req *pbauth.GetUserTokenR
 func (s *authServer) parseToken(ctx context.Context, tokensString string) (claims *tokenverify.Claims, err error) {
 	claims, err = tokenverify.GetClaimFromToken(tokensString, authverify.Secret(s.config.Share.Secret))
 	if err != nil {
-		return nil, errs.Wrap(err)
+		return nil, err
+	}
+	isAdmin := authverify.IsManagerUserID(claims.UserID, s.config.Share.IMAdminUserID)
+	if isAdmin {
+		return claims, nil
 	}
 	m, err := s.authDatabase.GetTokensWithoutError(ctx, claims.UserID, claims.PlatformID)
 	if err != nil {
@@ -134,10 +164,7 @@ func (s *authServer) parseToken(ctx context.Context, tokensString string) (claim
 	return nil, servererrs.ErrTokenNotExist.Wrap()
 }
 
-func (s *authServer) ParseToken(
-	ctx context.Context,
-	req *pbauth.ParseTokenReq,
-) (resp *pbauth.ParseTokenResp, err error) {
+func (s *authServer) ParseToken(ctx context.Context, req *pbauth.ParseTokenReq) (resp *pbauth.ParseTokenResp, err error) {
 	resp = &pbauth.ParseTokenResp{}
 	claims, err := s.parseToken(ctx, req.Token)
 	if err != nil {
@@ -160,7 +187,7 @@ func (s *authServer) ForceLogout(ctx context.Context, req *pbauth.ForceLogoutReq
 }
 
 func (s *authServer) forceKickOff(ctx context.Context, userID string, platformID int32) error {
-	conns, err := s.RegisterCenter.GetConns(ctx, s.config.Share.RpcRegisterName.MessageGateway)
+	conns, err := s.RegisterCenter.GetConns(ctx, s.config.Discovery.RpcService.MessageGateway)
 	if err != nil {
 		return err
 	}
@@ -175,7 +202,7 @@ func (s *authServer) forceKickOff(ctx context.Context, userID string, platformID
 	}
 
 	m, err := s.authDatabase.GetTokensWithoutError(ctx, userID, int(platformID))
-	if err != nil && err != redis.Nil {
+	if err != nil && !errors.Is(err, redis.Nil) {
 		return err
 	}
 	for k := range m {
@@ -193,7 +220,7 @@ func (s *authServer) forceKickOff(ctx context.Context, userID string, platformID
 
 func (s *authServer) InvalidateToken(ctx context.Context, req *pbauth.InvalidateTokenReq) (*pbauth.InvalidateTokenResp, error) {
 	m, err := s.authDatabase.GetTokensWithoutError(ctx, req.UserID, int(req.PlatformID))
-	if err != nil && err != redis.Nil {
+	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
 	}
 	if m == nil {
@@ -214,4 +241,11 @@ func (s *authServer) InvalidateToken(ctx context.Context, req *pbauth.Invalidate
 		return nil, err
 	}
 	return &pbauth.InvalidateTokenResp{}, nil
+}
+
+func (s *authServer) KickTokens(ctx context.Context, req *pbauth.KickTokensReq) (*pbauth.KickTokensResp, error) {
+	if err := s.authDatabase.BatchSetTokenMapByUidPid(ctx, req.Tokens); err != nil {
+		return nil, err
+	}
+	return &pbauth.KickTokensResp{}, nil
 }

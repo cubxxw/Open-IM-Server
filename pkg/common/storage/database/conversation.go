@@ -16,18 +16,20 @@ package database
 
 import (
 	"context"
+
 	"github.com/openimsdk/open-im-server/v3/pkg/common/storage/model"
 	"github.com/openimsdk/tools/db/pagination"
 )
 
 type Conversation interface {
 	Create(ctx context.Context, conversations []*model.Conversation) (err error)
-	Delete(ctx context.Context, groupIDs []string) (err error)
 	UpdateByMap(ctx context.Context, userIDs []string, conversationID string, args map[string]any) (rows int64, err error)
 	Update(ctx context.Context, conversation *model.Conversation) (err error)
 	Find(ctx context.Context, ownerUserID string, conversationIDs []string) (conversations []*model.Conversation, err error)
 	FindUserID(ctx context.Context, userIDs []string, conversationIDs []string) ([]string, error)
 	FindUserIDAllConversationID(ctx context.Context, userID string) ([]string, error)
+	FindUserIDAllNotNotifyConversationID(ctx context.Context, userID string) ([]string, error)
+	FindUserIDAllPinnedConversationID(ctx context.Context, userID string) ([]string, error)
 	Take(ctx context.Context, userID, conversationID string) (conversation *model.Conversation, err error)
 	FindConversationID(ctx context.Context, userID string, conversationIDs []string) (existConversationID []string, err error)
 	FindUserIDAllConversations(ctx context.Context, userID string) (conversations []*model.Conversation, err error)
@@ -39,4 +41,6 @@ type Conversation interface {
 	GetConversationsByConversationID(ctx context.Context, conversationIDs []string) ([]*model.Conversation, error)
 	GetConversationIDsNeedDestruct(ctx context.Context) ([]*model.Conversation, error)
 	GetConversationNotReceiveMessageUserIDs(ctx context.Context, conversationID string) ([]string, error)
+	FindConversationUserVersion(ctx context.Context, userID string, version uint, limit int) (*model.VersionLog, error)
+	FindRandConversation(ctx context.Context, ts int64, limit int) ([]*model.Conversation, error)
 }
